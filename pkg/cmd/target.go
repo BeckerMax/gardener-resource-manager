@@ -61,6 +61,7 @@ type TargetClientConfig struct {
 	Client     client.Client
 	RESTMapper meta.RESTMapper
 	Scheme     *runtime.Scheme
+	Config     *rest.Config
 
 	cache cache.Cache
 }
@@ -146,6 +147,7 @@ func NewTargetClientConfig(kubeconfigPath string, disableCache bool, cacheResync
 		Client:     targetClient,
 		RESTMapper: restMapper,
 		Scheme:     scheme,
+		Config:     restConfig,
 		cache:      targetCache,
 	}, nil
 }
@@ -218,4 +220,5 @@ func (c *TargetClientConfig) Apply(conf *TargetClientConfig) {
 	conf.Client = c.Client
 	conf.RESTMapper = c.RESTMapper
 	conf.Scheme = c.Scheme
+	conf.Config = c.Config
 }

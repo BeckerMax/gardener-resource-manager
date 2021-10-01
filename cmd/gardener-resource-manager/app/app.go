@@ -52,6 +52,7 @@ func NewResourceManagerCommand() *cobra.Command {
 	secretControllerOpts := &secretcontroller.ControllerOptions{}
 	healthControllerOpts := &healthcontroller.ControllerOptions{}
 	gcControllerOpts := &garbagecollectorcontroller.ControllerOptions{}
+	tokenRequestorOpts := &tokenrequestor.ControllerOptions{}
 
 	cmd := &cobra.Command{
 		Use: "gardener-resource-manager",
@@ -74,6 +75,7 @@ func NewResourceManagerCommand() *cobra.Command {
 				resourceControllerOpts,
 				secretControllerOpts,
 				healthControllerOpts,
+				tokenRequestorOpts,
 				gcControllerOpts,
 			); err != nil {
 				return err
@@ -87,6 +89,7 @@ func NewResourceManagerCommand() *cobra.Command {
 			sourceClientOpts.Completed().ApplyClientSet(&healthz.DefaultAddOptions.ClientSet)
 			targetClientOpts.Completed().Apply(&resourceControllerOpts.Completed().TargetClientConfig)
 			targetClientOpts.Completed().Apply(&healthControllerOpts.Completed().TargetClientConfig)
+			targetClientOpts.Completed().Apply(&tokenRequestorOpts.Completed().TargetClientConfig)
 			resourceControllerOpts.Completed().ApplyClassFilter(&secretControllerOpts.Completed().ClassFilter)
 			resourceControllerOpts.Completed().ApplyClassFilter(&healthControllerOpts.Completed().ClassFilter)
 			if err := resourceControllerOpts.Completed().ApplyDefaultClusterId(ctx, entryLog, sourceClientOpts.Completed().RESTConfig); err != nil {
@@ -171,6 +174,7 @@ func NewResourceManagerCommand() *cobra.Command {
 		secretControllerOpts,
 		healthControllerOpts,
 		gcControllerOpts,
+		tokenRequestorOpts,
 	)
 	verflag.AddFlags(cmd.Flags())
 

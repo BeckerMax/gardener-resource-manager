@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
+	corev1clientset "k8s.io/client-go/kubernetes/typed/core/v1"
 	crcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -44,10 +45,16 @@ type ControllerConfig struct {
 
 // AddToManagerWithOptions adds the controller to a Manager with the given config.
 func AddToManagerWithOptions(mgr manager.Manager, conf ControllerConfig) error {
+	coreV1Client, err := corev1clientset.NewForConfig(conf.TargetClientConfig.Config)
+	if err != nil {
+		return fmt.Errorf("could not create coreV1Client: %w", err)
+	}
+
 	ctrl, err := crcontroller.New(ControllerName, mgr, crcontroller.Options{
 		MaxConcurrentReconciles: 5, //TODO configurable
 		Reconciler: &reconciler{
-			targetClient: conf.TargetClientConfig.Client,
+			targetClient:       conf.TargetClientConfig.Client,
+			targetCoreV1Client: coreV1Client,
 		},
 	})
 	if err != nil {
