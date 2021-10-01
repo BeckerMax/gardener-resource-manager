@@ -38,7 +38,10 @@ start:
 	  --sync-period=60s \
 	  --max-concurrent-workers=10 \
 	  --health-sync-period=60s \
-	  --health-max-concurrent-workers=10
+	  --health-max-concurrent-workers=10 \
+	  --target-kubeconfig=/tmp/shoot-aws2-kubecfg.yml \
+      --kubeconfig=/tmp/shoot-aws2-kubecfg.yml \
+      --namespace=foo
 
 #################################################################
 # Rules related to binary build, Docker image build and release #

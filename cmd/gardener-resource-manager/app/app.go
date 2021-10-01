@@ -32,6 +32,7 @@ import (
 	healthcontroller "github.com/gardener/gardener-resource-manager/pkg/controller/health"
 	resourcecontroller "github.com/gardener/gardener-resource-manager/pkg/controller/managedresource"
 	secretcontroller "github.com/gardener/gardener-resource-manager/pkg/controller/secret"
+	"github.com/gardener/gardener-resource-manager/pkg/controller/tokenrequestor"
 	"github.com/gardener/gardener-resource-manager/pkg/healthz"
 	logpkg "github.com/gardener/gardener-resource-manager/pkg/log"
 )
@@ -113,6 +114,7 @@ func NewResourceManagerCommand() *cobra.Command {
 				healthcontroller.AddToManager,
 				garbagecollectorcontroller.AddToManager,
 				healthz.AddToManager,
+				tokenrequestor.AddToManager,
 			); err != nil {
 				return err
 			}
