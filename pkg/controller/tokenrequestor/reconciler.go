@@ -17,7 +17,6 @@ package tokenrequestor
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -25,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/clock"
 	corev1clientset "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -33,19 +33,20 @@ import (
 )
 
 const (
-	serviceAccountName                   = "serviceaccount.shoot.gardener.cloud/name"
-	serviceAccountNamespace              = "serviceaccount.shoot.gardener.cloud/namespace"
-	serviceAccountTokenExpirationSeconds = "serviceaccount.shoot.gardener.cloud/token-expiration-seconds"
-	serviceAccountTokenRenewTimestamp    = "serviceaccount.shoot.gardener.cloud/token-renew-timestamp"
+	serviceAccountName                    = "serviceaccount.shoot.gardener.cloud/name"
+	serviceAccountNamespace               = "serviceaccount.shoot.gardener.cloud/namespace"
+	serviceAccountTokenExpirationDuration = "serviceaccount.shoot.gardener.cloud/token-expiration-duration"
+	serviceAccountTokenRenewTimestamp     = "serviceaccount.shoot.gardener.cloud/token-renew-timestamp"
 	// TODO use constant also in Gardenlet
 	dataKeyToken = "token"
 	layout       = "2006-01-02T15:04:05.000Z"
 )
 
 type reconciler struct {
+	clock              clock.Clock
 	log                logr.Logger
 	targetClient       client.Client
-	targetCoreV1Client *corev1clientset.CoreV1Client
+	targetCoreV1Client corev1clientset.CoreV1Interface
 	client             client.Client
 }
 
@@ -78,10 +79,10 @@ func (r *reconciler) Reconcile(reconcileCtx context.Context, req reconcile.Reque
 		renewTimestamp, err := time.Parse(layout, v)
 		if err != nil {
 			// maybe continue
-			return reconcile.Result{}, fmt.Errorf("could not fetch Secret: %w", err)
+			return reconcile.Result{}, fmt.Errorf("could not parse renew timestamp: %w", err)
 		}
-		if time.Now().UTC().Before(renewTimestamp) {
-			return reconcile.Result{Requeue: true, RequeueAfter: time.Until(renewTimestamp)}, nil
+		if r.clock.Now().UTC().Before(renewTimestamp) {
+			return reconcile.Result{Requeue: true, RequeueAfter: renewTimestamp.Sub(r.clock.Now().UTC())}, nil
 		}
 	}
 
@@ -100,15 +101,16 @@ func (r *reconciler) Reconcile(reconcileCtx context.Context, req reconcile.Reque
 	}
 
 	var (
-		expirationSeconds int64 = 60 * 60
-		err               error
+		expirationDuration = time.Hour
+		err                error
 	)
-	if v, ok := secret.Annotations[serviceAccountTokenExpirationSeconds]; ok {
-		expirationSeconds, err = strconv.ParseInt(v, 10, 64)
+	if v, ok := secret.Annotations[serviceAccountTokenExpirationDuration]; ok {
+		expirationDuration, err = time.ParseDuration(v)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
 	}
+	expirationSeconds := int64(expirationDuration / time.Second)
 
 	tokenRequest := &authenticationv1.TokenRequest{
 		Spec: authenticationv1.TokenRequestSpec{
@@ -128,11 +130,11 @@ func (r *reconciler) Reconcile(reconcileCtx context.Context, req reconcile.Reque
 	}
 
 	expirationTimestamp := result.Status.ExpirationTimestamp.Time.UTC()
-	expirationDuration := expirationTimestamp.Sub(time.Now().UTC())
+	expirationDuration = expirationTimestamp.Sub(r.clock.Now().UTC())
 	renewDuration := expirationDuration * 80 / 100
 
 	secret.Data[dataKeyToken] = []byte(result.Status.Token)
-	metav1.SetMetaDataAnnotation(&secret.ObjectMeta, serviceAccountTokenRenewTimestamp, time.Now().UTC().Add(renewDuration).Format(layout))
+	metav1.SetMetaDataAnnotation(&secret.ObjectMeta, serviceAccountTokenRenewTimestamp, r.clock.Now().UTC().Add(renewDuration).Format(layout))
 	if err := r.client.Patch(ctx, secret, patch); err != nil {
 		return reconcile.Result{}, fmt.Errorf("could not update Secret with token: %w", err)
 	}

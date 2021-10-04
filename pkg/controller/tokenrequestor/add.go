@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/clock"
 	corev1clientset "k8s.io/client-go/kubernetes/typed/core/v1"
 	crcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -53,6 +54,7 @@ func AddToManagerWithOptions(mgr manager.Manager, conf ControllerConfig) error {
 	ctrl, err := crcontroller.New(ControllerName, mgr, crcontroller.Options{
 		MaxConcurrentReconciles: 5, //TODO configurable
 		Reconciler: &reconciler{
+			clock:              clock.RealClock{},
 			targetClient:       conf.TargetClientConfig.Client,
 			targetCoreV1Client: coreV1Client,
 		},
