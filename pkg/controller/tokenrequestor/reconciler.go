@@ -75,43 +75,70 @@ func (r *reconciler) Reconcile(reconcileCtx context.Context, req reconcile.Reque
 		return reconcile.Result{}, fmt.Errorf("could not fetch Secret: %w", err)
 	}
 
-	if v, ok := secret.Annotations[serviceAccountTokenRenewTimestamp]; ok {
-		renewTimestamp, err := time.Parse(layout, v)
-		if err != nil {
-			// maybe continue
-			return reconcile.Result{}, fmt.Errorf("could not parse renew timestamp: %w", err)
-		}
-		if r.clock.Now().UTC().Before(renewTimestamp) {
-			return reconcile.Result{Requeue: true, RequeueAfter: renewTimestamp.Sub(r.clock.Now().UTC())}, nil
-		}
+	mustRequeue, requeueAfter, err := r.requeue(secret.Annotations[serviceAccountTokenRenewTimestamp])
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	if mustRequeue {
+		return reconcile.Result{Requeue: true, RequeueAfter: requeueAfter}, nil
 	}
 
-	sa := &corev1.ServiceAccount{
+	serviceAccount, err := r.reconcileServiceAccount(ctx, secret)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
+	expirationSeconds, err := tokenExpirationSeconds(secret)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
+	tokenRequest, err := r.createServiceAccountToken(ctx, serviceAccount, expirationSeconds)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
+	renewDuration := r.renewDuration(tokenRequest.Status.ExpirationTimestamp.Time)
+
+	if err := r.reconcileSecret(ctx, secret, tokenRequest.Status.Token, renewDuration); err != nil {
+		return reconcile.Result{}, fmt.Errorf("could not update Secret with token: %w", err)
+	}
+
+	return reconcile.Result{Requeue: true, RequeueAfter: renewDuration}, nil
+}
+
+func (r *reconciler) reconcileServiceAccount(ctx context.Context, secret *corev1.Secret) (*corev1.ServiceAccount, error) {
+	serviceAccount := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secret.Annotations[serviceAccountName],
 			Namespace: secret.Annotations[serviceAccountNamespace],
 		},
 	}
 
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.targetClient, sa, func() error {
-		sa.AutomountServiceAccountToken = pointer.Bool(false)
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.targetClient, serviceAccount, func() error {
+		serviceAccount.AutomountServiceAccountToken = pointer.Bool(false)
 		return nil
 	}); err != nil {
-		return reconcile.Result{}, err
+		return nil, err
 	}
 
-	var (
-		expirationDuration = time.Hour
-		err                error
-	)
-	if v, ok := secret.Annotations[serviceAccountTokenExpirationDuration]; ok {
-		expirationDuration, err = time.ParseDuration(v)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-	}
-	expirationSeconds := int64(expirationDuration / time.Second)
+	return serviceAccount, nil
+}
 
+func (r *reconciler) reconcileSecret(ctx context.Context, secret *corev1.Secret, token string, renewDuration time.Duration) error {
+	patch := client.MergeFrom(secret.DeepCopy())
+
+	if secret.Data == nil {
+		secret.Data = make(map[string][]byte, 1)
+	}
+
+	secret.Data[dataKeyToken] = []byte(token)
+	metav1.SetMetaDataAnnotation(&secret.ObjectMeta, serviceAccountTokenRenewTimestamp, r.clock.Now().UTC().Add(renewDuration).Format(layout))
+
+	return r.client.Patch(ctx, secret, patch)
+}
+
+func (r *reconciler) createServiceAccountToken(ctx context.Context, sa *corev1.ServiceAccount, expirationSeconds int64) (*authenticationv1.TokenRequest, error) {
 	tokenRequest := &authenticationv1.TokenRequest{
 		Spec: authenticationv1.TokenRequestSpec{
 			Audiences:         []string{"kubernetes"},
@@ -119,25 +146,43 @@ func (r *reconciler) Reconcile(reconcileCtx context.Context, req reconcile.Reque
 		},
 	}
 
-	result, err := r.targetCoreV1Client.ServiceAccounts(sa.Namespace).CreateToken(ctx, sa.Name, tokenRequest, metav1.CreateOptions{})
+	return r.targetCoreV1Client.ServiceAccounts(sa.Namespace).CreateToken(ctx, sa.Name, tokenRequest, metav1.CreateOptions{})
+}
+
+func (r *reconciler) requeue(renewTimestamp string) (bool, time.Duration, error) {
+	if len(renewTimestamp) == 0 {
+		return false, 0, nil
+	}
+
+	renewTime, err := time.Parse(layout, renewTimestamp)
 	if err != nil {
-		return reconcile.Result{}, err
+		return false, 0, fmt.Errorf("could not parse renew timestamp: %w", err)
 	}
 
-	patch := client.MergeFrom(secret.DeepCopy())
-	if secret.Data == nil {
-		secret.Data = make(map[string][]byte, 1)
+	if r.clock.Now().UTC().Before(renewTime) {
+		return true, renewTime.Sub(r.clock.Now().UTC()), nil
 	}
 
-	expirationTimestamp := result.Status.ExpirationTimestamp.Time.UTC()
-	expirationDuration = expirationTimestamp.Sub(r.clock.Now().UTC())
-	renewDuration := expirationDuration * 80 / 100
+	return false, 0, nil
+}
 
-	secret.Data[dataKeyToken] = []byte(result.Status.Token)
-	metav1.SetMetaDataAnnotation(&secret.ObjectMeta, serviceAccountTokenRenewTimestamp, r.clock.Now().UTC().Add(renewDuration).Format(layout))
-	if err := r.client.Patch(ctx, secret, patch); err != nil {
-		return reconcile.Result{}, fmt.Errorf("could not update Secret with token: %w", err)
+func (r *reconciler) renewDuration(expirationTimestamp time.Time) time.Duration {
+	expirationDuration := expirationTimestamp.UTC().Sub(r.clock.Now().UTC())
+	return expirationDuration * 80 / 100
+}
+
+func tokenExpirationSeconds(secret *corev1.Secret) (int64, error) {
+	var (
+		expirationDuration = time.Hour
+		err                error
+	)
+
+	if v, ok := secret.Annotations[serviceAccountTokenExpirationDuration]; ok {
+		expirationDuration, err = time.ParseDuration(v)
+		if err != nil {
+			return 0, err
+		}
 	}
 
-	return reconcile.Result{Requeue: true, RequeueAfter: renewDuration}, nil
+	return int64(expirationDuration / time.Second), nil
 }
