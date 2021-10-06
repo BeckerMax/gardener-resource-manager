@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gardener/gardener/pkg/controllerutils"
 	"github.com/go-logr/logr"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -33,6 +34,7 @@ import (
 )
 
 const (
+	finalizerName                         = "resources.gardener.cloud/tokenrequestor-controller"
 	serviceAccountName                    = "serviceaccount.shoot.gardener.cloud/name"
 	serviceAccountNamespace               = "serviceaccount.shoot.gardener.cloud/namespace"
 	serviceAccountTokenExpirationDuration = "serviceaccount.shoot.gardener.cloud/token-expiration-duration"
@@ -73,6 +75,22 @@ func (r *reconciler) Reconcile(reconcileCtx context.Context, req reconcile.Reque
 			return reconcile.Result{}, nil
 		}
 		return reconcile.Result{}, fmt.Errorf("could not fetch Secret: %w", err)
+	}
+
+	if secret.DeletionTimestamp != nil {
+		if err := r.deleteServiceAccount(ctx, secret); err != nil {
+			return reconcile.Result{}, err
+		}
+
+		if err := controllerutils.PatchRemoveFinalizers(ctx, r.client, secret, finalizerName); err != nil {
+			return reconcile.Result{}, fmt.Errorf("error removing finalizer from Secret: %+v", err)
+		}
+
+		return reconcile.Result{}, nil
+	}
+
+	if err := controllerutils.PatchAddFinalizers(ctx, r.client, secret, finalizerName); err != nil {
+		return reconcile.Result{}, err
 	}
 
 	mustRequeue, requeueAfter, err := r.requeue(secret.Annotations[serviceAccountTokenRenewTimestamp])
@@ -123,6 +141,17 @@ func (r *reconciler) reconcileServiceAccount(ctx context.Context, secret *corev1
 	}
 
 	return serviceAccount, nil
+}
+
+func (r *reconciler) deleteServiceAccount(ctx context.Context, secret *corev1.Secret) error {
+	serviceAccount := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secret.Annotations[serviceAccountName],
+			Namespace: secret.Annotations[serviceAccountNamespace],
+		},
+	}
+
+	return client.IgnoreNotFound(r.targetClient.Delete(ctx, serviceAccount))
 }
 
 func (r *reconciler) reconcileSecret(ctx context.Context, secret *corev1.Secret, token string, renewDuration time.Duration) error {

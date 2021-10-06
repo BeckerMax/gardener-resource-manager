@@ -19,6 +19,8 @@ controllers:
     concurrentSyncs: 10
   garbageCollector:
     syncPeriod: ""
+  tokenRequestor:
+    concurrentSyncs: 0
 
 leaderElection:
   enabled: true

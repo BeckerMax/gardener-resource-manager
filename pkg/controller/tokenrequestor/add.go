@@ -17,13 +17,17 @@ package tokenrequestor
 import (
 	"fmt"
 
+	gardenerconstantsv1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/clock"
 	corev1clientset "k8s.io/client-go/kubernetes/typed/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	crcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	resourcemanagercmd "github.com/gardener/gardener-resource-manager/pkg/cmd"
@@ -37,11 +41,13 @@ var defaultControllerConfig ControllerConfig
 
 // ControllerOptions are options for adding the controller to a Manager.
 type ControllerOptions struct {
+	maxConcurrentWorkers int
 }
 
 // ControllerConfig is the completed configuration for the controller.
 type ControllerConfig struct {
-	TargetClientConfig resourcemanagercmd.TargetClientConfig
+	MaxConcurrentWorkers int
+	TargetClientConfig   resourcemanagercmd.TargetClientConfig
 }
 
 // AddToManagerWithOptions adds the controller to a Manager with the given config.
@@ -52,7 +58,7 @@ func AddToManagerWithOptions(mgr manager.Manager, conf ControllerConfig) error {
 	}
 
 	ctrl, err := crcontroller.New(ControllerName, mgr, crcontroller.Options{
-		MaxConcurrentReconciles: 5, //TODO configurable
+		MaxConcurrentReconciles: conf.MaxConcurrentWorkers,
 		Reconciler: &reconciler{
 			clock:              clock.RealClock{},
 			targetClient:       conf.TargetClientConfig.Client,
@@ -66,7 +72,12 @@ func AddToManagerWithOptions(mgr manager.Manager, conf ControllerConfig) error {
 	return ctrl.Watch(
 		&source.Kind{Type: &corev1.Secret{}},
 		&handler.EnqueueRequestForObject{},
-		// TOOD filter by label
+		predicate.Funcs{
+			CreateFunc:  func(e event.CreateEvent) bool { return isRelevantSecret(e.Object) },
+			UpdateFunc:  func(e event.UpdateEvent) bool { return isRelevantSecret(e.ObjectNew) },
+			DeleteFunc:  func(e event.DeleteEvent) bool { return isRelevantSecret(e.Object) },
+			GenericFunc: func(e event.GenericEvent) bool { return false },
+		},
 	)
 }
 
@@ -77,16 +88,27 @@ func AddToManager(mgr manager.Manager) error {
 
 // AddFlags adds the needed command line flags to the given FlagSet.
 func (o *ControllerOptions) AddFlags(fs *pflag.FlagSet) {
-	//fs.DurationVar(&o.syncPeriod, "token-collector-sync-period", 0, "duration how often the garbage collection should be performed (default: 0, i.e., gc is disabled)")
+	fs.IntVar(&o.maxConcurrentWorkers, "tokenrequestor-max-concurrent-workers", 0, "number of worker threads for concurrent tokenrequestor reconciliations (default: 0)")
 }
 
 // Complete completes the given command line flags and set the defaultControllerConfig accordingly.
 func (o *ControllerOptions) Complete() error {
-	defaultControllerConfig = ControllerConfig{}
+	defaultControllerConfig = ControllerConfig{
+		MaxConcurrentWorkers: o.maxConcurrentWorkers,
+	}
 	return nil
 }
 
 // Completed returns the completed ControllerConfig.
 func (o *ControllerOptions) Completed() *ControllerConfig {
 	return &defaultControllerConfig
+}
+
+func isRelevantSecret(obj client.Object) bool {
+	secret, ok := obj.(*corev1.Secret)
+	if !ok {
+		return false
+	}
+	// TODO introduce constant for shoot-token purpose after part of g/g
+	return secret.Labels != nil && secret.Labels[gardenerconstantsv1beta1.GardenerPurpose] == "shoot-token"
 }
