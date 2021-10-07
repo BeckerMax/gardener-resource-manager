@@ -118,40 +118,6 @@ var _ = Describe("Reconciler", func() {
 				Namespace: secret.Namespace,
 			}}
 		})
-		It("should set a finalizer on the secret", func() {
-			fakeCreateServiceAccountToken()
-			Expect(sourceClient.Create(ctx, secret)).To(Succeed())
-
-			_, err := ctrl.Reconcile(ctx, request)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(sourceClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(Succeed())
-			Expect(secret.Finalizers).To(ConsistOf("resources.gardener.cloud/tokenrequestor-controller"))
-		})
-
-		It("should remove the finalizer from the secret after deleting the ServiceAccount", func() {
-			fakeCreateServiceAccountToken()
-			Expect(sourceClient.Create(ctx, secret)).To(Succeed())
-			Expect(targetClient.Get(ctx, client.ObjectKeyFromObject(serviceAccount), serviceAccount)).To(MatchError(ContainSubstring("not found")))
-
-			_, err := ctrl.Reconcile(ctx, request)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(targetClient.Get(ctx, client.ObjectKeyFromObject(serviceAccount), serviceAccount)).To(Succeed())
-			Expect(serviceAccount.AutomountServiceAccountToken).To(PointTo(BeFalse()))
-
-			Expect(sourceClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(Succeed())
-			Expect(sourceClient.Delete(ctx, secret)).To(Succeed())
-
-			result, err := ctrl.Reconcile(ctx, request)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal(reconcile.Result{}))
-
-			Expect(targetClient.Get(ctx, client.ObjectKeyFromObject(serviceAccount), serviceAccount)).To(MatchError(ContainSubstring("not found")))
-			Expect(targetClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(MatchError(ContainSubstring("not found")))
-		})
-
-		// TODO annotation ignore SA
 
 		It("should generate a new service account, a new token and requeue", func() {
 			fakeCreateServiceAccountToken()
@@ -229,6 +195,59 @@ var _ = Describe("Reconciler", func() {
 
 			Expect(sourceClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(Succeed())
 			Expect(secret.Annotations).To(HaveKeyWithValue("serviceaccount.shoot.gardener.cloud/token-renew-timestamp", fakeNow.Add(renewDuration).Format(layout)))
+		})
+
+		It("should set a finalizer on the secret", func() {
+			fakeCreateServiceAccountToken()
+			Expect(sourceClient.Create(ctx, secret)).To(Succeed())
+
+			_, err := ctrl.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(sourceClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(Succeed())
+			Expect(secret.Finalizers).To(ConsistOf("resources.gardener.cloud/tokenrequestor-controller"))
+		})
+
+		It("should remove the finalizer from the secret after deleting the ServiceAccount", func() {
+			fakeCreateServiceAccountToken()
+			Expect(sourceClient.Create(ctx, secret)).To(Succeed())
+			Expect(targetClient.Get(ctx, client.ObjectKeyFromObject(serviceAccount), serviceAccount)).To(MatchError(ContainSubstring("not found")))
+
+			_, err := ctrl.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(targetClient.Get(ctx, client.ObjectKeyFromObject(serviceAccount), serviceAccount)).To(Succeed())
+
+			Expect(sourceClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(Succeed())
+			Expect(sourceClient.Delete(ctx, secret)).To(Succeed())
+
+			result, err := ctrl.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(reconcile.Result{}))
+
+			Expect(targetClient.Get(ctx, client.ObjectKeyFromObject(serviceAccount), serviceAccount)).To(MatchError(ContainSubstring("not found")))
+			Expect(targetClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(MatchError(ContainSubstring("not found")))
+		})
+
+		It("should ignore the ServiceAccount on deletion if ignore-on-deletion annotation is set", func() {
+			metav1.SetMetaDataAnnotation(&secret.ObjectMeta, "serviceaccount.shoot.gardener.cloud/ignore-on-deletion", "true")
+
+			fakeCreateServiceAccountToken()
+			Expect(sourceClient.Create(ctx, secret)).To(Succeed())
+			_, err := ctrl.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(targetClient.Get(ctx, client.ObjectKeyFromObject(serviceAccount), serviceAccount)).To(Succeed())
+
+			Expect(sourceClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(Succeed())
+			Expect(sourceClient.Delete(ctx, secret)).To(Succeed())
+
+			result, err := ctrl.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(reconcile.Result{}))
+
+			Expect(targetClient.Get(ctx, client.ObjectKeyFromObject(secret), secret)).To(MatchError(ContainSubstring("not found")))
+			Expect(targetClient.Get(ctx, client.ObjectKeyFromObject(serviceAccount), serviceAccount)).To(Succeed())
 		})
 
 		Context("error", func() {

@@ -39,6 +39,7 @@ const (
 	serviceAccountNamespace               = "serviceaccount.shoot.gardener.cloud/namespace"
 	serviceAccountTokenExpirationDuration = "serviceaccount.shoot.gardener.cloud/token-expiration-duration"
 	serviceAccountTokenRenewTimestamp     = "serviceaccount.shoot.gardener.cloud/token-renew-timestamp"
+	serviceAccountIgnoreOnDeletion        = "serviceaccount.shoot.gardener.cloud/ignore-on-deletion"
 	// TODO use constant also in Gardenlet
 	dataKeyToken = "token"
 	layout       = "2006-01-02T15:04:05.000Z"
@@ -78,8 +79,10 @@ func (r *reconciler) Reconcile(reconcileCtx context.Context, req reconcile.Reque
 	}
 
 	if secret.DeletionTimestamp != nil {
-		if err := r.deleteServiceAccount(ctx, secret); err != nil {
-			return reconcile.Result{}, err
+		if shouldDeleteServiceAccount(secret) {
+			if err := r.deleteServiceAccount(ctx, secret); err != nil {
+				return reconcile.Result{}, err
+			}
 		}
 
 		if err := controllerutils.PatchRemoveFinalizers(ctx, r.client, secret, finalizerName); err != nil {
@@ -123,6 +126,14 @@ func (r *reconciler) Reconcile(reconcileCtx context.Context, req reconcile.Reque
 	}
 
 	return reconcile.Result{Requeue: true, RequeueAfter: renewDuration}, nil
+}
+
+func shouldDeleteServiceAccount(secret *corev1.Secret) bool {
+	v, ok := secret.Annotations[serviceAccountIgnoreOnDeletion]
+	if ok && v == "true" {
+		return false
+	}
+	return true
 }
 
 func (r *reconciler) reconcileServiceAccount(ctx context.Context, secret *corev1.Secret) (*corev1.ServiceAccount, error) {
