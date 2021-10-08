@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/gardener/gardener/pkg/controllerutils"
+
 	"github.com/go-logr/logr"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -39,10 +40,11 @@ const (
 	serviceAccountNamespace               = "serviceaccount.shoot.gardener.cloud/namespace"
 	serviceAccountTokenExpirationDuration = "serviceaccount.shoot.gardener.cloud/token-expiration-duration"
 	serviceAccountTokenRenewTimestamp     = "serviceaccount.shoot.gardener.cloud/token-renew-timestamp"
-	serviceAccountIgnoreOnDeletion        = "serviceaccount.shoot.gardener.cloud/ignore-on-deletion"
+	serviceAccountSkipDeletion            = "serviceaccount.shoot.gardener.cloud/skip-deletion"
 	// TODO use constant also in Gardenlet
-	dataKeyToken = "token"
-	layout       = "2006-01-02T15:04:05.000Z"
+	dataKeyToken              = "token"
+	layout                    = "2006-01-02T15:04:05.000Z"
+	defaultExpirationDuration = time.Hour * 12
 )
 
 type reconciler struct {
@@ -129,11 +131,7 @@ func (r *reconciler) Reconcile(reconcileCtx context.Context, req reconcile.Reque
 }
 
 func shouldDeleteServiceAccount(secret *corev1.Secret) bool {
-	v, ok := secret.Annotations[serviceAccountIgnoreOnDeletion]
-	if ok && v == "true" {
-		return false
-	}
-	return true
+	return secret.Annotations[serviceAccountSkipDeletion] != "true"
 }
 
 func (r *reconciler) reconcileServiceAccount(ctx context.Context, secret *corev1.Secret) (*corev1.ServiceAccount, error) {
@@ -213,7 +211,7 @@ func (r *reconciler) renewDuration(expirationTimestamp time.Time) time.Duration 
 
 func tokenExpirationSeconds(secret *corev1.Secret) (int64, error) {
 	var (
-		expirationDuration = time.Hour
+		expirationDuration = defaultExpirationDuration
 		err                error
 	)
 

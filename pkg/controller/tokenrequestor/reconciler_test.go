@@ -57,7 +57,7 @@ var _ = Describe("Reconciler", func() {
 			request        reconcile.Request
 
 			secretName              = "kube-scheduler"
-			serviceAccountName      = "kube-scheduler-serviceacount"
+			serviceAccountName      = "kube-scheduler-serviceaccount"
 			serviceAccountNamespace = "kube-system"
 			expirationDuration      = 100 * time.Minute
 			renewDuration           = 80 * time.Minute
@@ -230,7 +230,7 @@ var _ = Describe("Reconciler", func() {
 		})
 
 		It("should ignore the ServiceAccount on deletion if ignore-on-deletion annotation is set", func() {
-			metav1.SetMetaDataAnnotation(&secret.ObjectMeta, "serviceaccount.shoot.gardener.cloud/ignore-on-deletion", "true")
+			metav1.SetMetaDataAnnotation(&secret.ObjectMeta, "serviceaccount.shoot.gardener.cloud/skip-deletion", "true")
 
 			fakeCreateServiceAccountToken()
 			Expect(sourceClient.Create(ctx, secret)).To(Succeed())
