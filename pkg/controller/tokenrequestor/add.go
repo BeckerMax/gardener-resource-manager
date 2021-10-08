@@ -52,6 +52,10 @@ type ControllerConfig struct {
 
 // AddToManagerWithOptions adds the controller to a Manager with the given config.
 func AddToManagerWithOptions(mgr manager.Manager, conf ControllerConfig) error {
+	if conf.MaxConcurrentWorkers == 0 {
+		return nil
+	}
+
 	coreV1Client, err := corev1clientset.NewForConfig(conf.TargetClientConfig.Config)
 	if err != nil {
 		return fmt.Errorf("could not create coreV1Client: %w", err)
